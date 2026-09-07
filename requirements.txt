@@ -1,0 +1,18 @@
+# ── Leitura de EDF ──────────────────────────────────────────────────────────
+mne>=1.6.0            # carregamento nativo de EDF + metadados de canais
+
+# ── Processamento de sinais ──────────────────────────────────────────────────
+numpy>=1.24
+scipy>=1.11           # STFT via scipy.signal.spectrogram
+
+# ── Visualização e geração de imagens ───────────────────────────────────────
+matplotlib>=3.7
+Pillow>=10.0          # manipulação e salvamento de PNG
+
+# ── Utilidades ───────────────────────────────────────────────────────────────
+tqdm>=4.66            # barra de progresso no notebook
+ipywidgets>=8.0       # necessário para tqdm.notebook funcionar no JupyterLab
+pandas>=2.0           # manifesto annotations.csv
+
+# ── Ambiente de desenvolvimento ──────────────────────────────────────────────
+jupyterlab>=4.0
