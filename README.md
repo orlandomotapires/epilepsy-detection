@@ -91,16 +91,16 @@ Seizure end time:        HH.MM.SS
 
 > **Nota:** Os canais EKG (33 e 34) são ignorados no pré-processamento.
 
-**Segmentação temporal (janela fixa de 90 s):**
+**Segmentação temporal (janela fixa de 90 s = 46.080 amostras a 512 Hz):**
 
-Cada gravação EDF é fatiada em exatamente 4 segmentos de **90 segundos (46.080 amostras a 512 Hz)** por ocorrência de crise:
+Para cada crise anotada (com início `sz_start` e fim `sz_end`), define-se o ponto central da crise: $\text{sz\_center} = (\text{sz\_start} + \text{sz\_end}) / 2$. A partir dele, os 4 segmentos de 90 segundos são extraídos:
 
-| Classe | Início | Fim |
-|---|---|---|
-| `pre_ictal`  | `seizure_start − 90 s` | `seizure_start` |
-| `ictal`      | `seizure_start` | `seizure_start + 90 s` |
-| `pos_ictal`  | `seizure_end` | `seizure_end + 90 s` |
-| `normal`     | Segmento basal distante ≥ 30 min de qualquer crise | mesmo + 90 s |
+| Classe | Início | Fim | Descrição |
+|---|---|---|---|
+| `ictal`      | $\text{sz\_center} - 45\text{ s}$ | $\text{sz\_center} + 45\text{ s}$ | Janela de 90 s centralizada no ponto médio da crise |
+| `pre_ictal`  | $\text{ictal\_start} - 90\text{ s}$ | $\text{ictal\_start}$ | Janela de 90 s imediatamente anterior ao início do ICTAL |
+| `pos_ictal`  | $\text{ictal\_end}$ | $\text{ictal\_end} + 90\text{ s}$ | Janela de 90 s imediatamente posterior ao término do ICTAL |
+| `normal`     | Início livre fora de crises | mesmo $+ 90\text{ s}$ | Janela de 90 s em região basal que não colida com a zona $[\text{sz\_center} - 135\text{ s}, \text{sz\_center} + 135\text{ s}]$ de nenhuma crise do EDF |
 
-O pré-processamento é realizado no notebook `notebooks/00_data_conversion.ipynb`, que recebe como entrada a pasta `physionet.org/files` e gera os espectogramas STFT em `data/processed/spectrograms/`, organizados por paciente e nomeados conforme o arquivo EDF de origem (ex: `PN00-1_ictal.png`).
+O pré-processamento é realizado no notebook `notebooks/00_data_conversion.ipynb`, que recebe como entrada a pasta `physionet.org/files` e gera os espectogramas STFT em `data/processed/spectrograms/`, organizados por paciente e nomeados conforme o arquivo EDF e crise de origem (ex: `PN00-1_seizure01_ictal.png`).
 
