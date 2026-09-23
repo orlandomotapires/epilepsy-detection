@@ -1,110 +1,102 @@
 """
 segmentor.py
 ------------
-Extrai segmentos temporais de 90 s para cada uma das 4 classes:
-    - ictal: 90 s centralizados no ponto medio da crise (centro - 45 s ate centro + 45 s)
-    - pre_ictal: 90 s imediatamente anteriores ao ictal (centro - 135 s ate centro - 45 s)
-    - pos_ictal: 90 s imediatamente posteriores ao ictal (centro + 45 s ate centro + 135 s)
-    - normal: 90 s em regiao livre que nao colida com as zonas de crise de nenhuma ocorrencia
+Calcula as janelas temporais para cada uma das 4 classes e extrai
+os segmentos correspondentes de um objeto MNE Raw usando leitura lazy.
+
+Classes:
+    - ictal     : 90 s centralizados no ponto medio da crise
+    - pre_ictal : 90 s imediatamente anteriores ao inicio do ictal
+    - pos_ictal : 90 s imediatamente posteriores ao fim do ictal
+    - normal    : 90 s em regiao livre de qualquer zona de crise
 """
 
 import random
 import warnings
 import numpy as np
 
+
 WINDOW_S = 90    # janela fixa em segundos
 FS       = 512   # taxa de amostragem padrao
 
 
-def extract_segments(
-    raw_data:       np.ndarray,
+def compute_windows(
     sz_start_rel_s: float,
     sz_end_rel_s:   float,
+    total_s:        float,
     all_sz_starts:  list = None,
     all_sz_ends:    list = None,
     window_s:       int  = WINDOW_S,
-    fs:             int  = FS,
 ) -> dict:
     """
-    Extrai 4 segmentos de `window_s` segundos de um sinal EEG.
+    Calcula os intervalos [start_s, end_s) de cada classe sem tocar em dados.
 
     Parameters
     ----------
-    raw_data : np.ndarray
-        Shape (n_channels, n_samples). Dados brutos do EDF.
     sz_start_rel_s : float
         Inicio da crise em segundos relativos ao inicio do EDF.
     sz_end_rel_s : float
         Fim da crise em segundos relativos ao inicio do EDF.
+    total_s : float
+        Duracao total do EDF em segundos.
     all_sz_starts : list of float, optional
-        Lista com inicios de TODAS as crises do arquivo EDF.
+        Inicios de todas as crises do arquivo (para computar zonas proibidas
+        do segmento normal). Se None, usa apenas a crise atual.
     all_sz_ends : list of float, optional
-        Lista com fins de TODAS as crises do arquivo EDF.
+        Fins de todas as crises do arquivo. Deve ter o mesmo comprimento de
+        all_sz_starts.
     window_s : int
         Tamanho da janela em segundos (padrao: 90).
-    fs : int
-        Taxa de amostragem em Hz (padrao: 512).
 
     Returns
     -------
-    dict com chaves: 'pre_ictal', 'ictal', 'pos_ictal', 'normal'
-    Cada valor e np.ndarray shape (n_channels, window_s*fs) ou None se inviavel.
+    dict
+        Chaves: 'ictal', 'pre_ictal', 'pos_ictal', 'normal'.
+        Cada valor e (start_s, end_s) ou None se inviavel.
     """
-    n_samples = raw_data.shape[1]
-    total_s   = n_samples / fs
-    win       = int(round(window_s * fs))
-    segments  = {}
-
-    # Ponto medio da crise atual
+    half = window_s / 2.0  # 45 s
     sz_center_s = (sz_start_rel_s + sz_end_rel_s) / 2.0
 
-    # ── ictal ─────────────────────────────────────────────────────────────────
-    # Centralizado no ponto medio da crise: [centro - 45s, centro + 45s]
-    ic_start_s = sz_center_s - 45.0
-    ic_start   = int(round(ic_start_s * fs))
-    ic_end     = ic_start + win
+    windows = {}
 
-    if ic_start >= 0 and ic_end <= n_samples:
-        segments["ictal"] = raw_data[:, ic_start:ic_end].copy()
+    # ── ictal ────────────────────────────────────────────────────────────────
+    ic_start_s = sz_center_s - half
+    ic_end_s   = sz_center_s + half
+
+    if ic_start_s >= 0 and ic_end_s <= total_s:
+        windows["ictal"] = (ic_start_s, ic_end_s)
     else:
         warnings.warn(
-            f"[segmentor] ictal inviavel: janela [{ic_start}, {ic_end}] "
-            f"fora dos limites [0, {n_samples}]"
+            f"[segmentor] ictal inviavel: [{ic_start_s:.1f}, {ic_end_s:.1f}] "
+            f"fora de [0, {total_s:.1f}]"
         )
-        segments["ictal"] = None
+        windows["ictal"] = None
 
-    # ── pre_ictal ─────────────────────────────────────────────────────────────
-    # 90 s imediatamente anteriores ao inicio do ictal: [ic_start - 90s, ic_start]
-    pre_start = ic_start - win
-    pre_end   = ic_start
+    # ── pre_ictal ────────────────────────────────────────────────────────────
+    pre_start_s = ic_start_s - window_s
+    pre_end_s   = ic_start_s
 
-    if pre_start >= 0 and pre_end <= n_samples:
-        segments["pre_ictal"] = raw_data[:, pre_start:pre_end].copy()
+    if pre_start_s >= 0 and pre_end_s <= total_s:
+        windows["pre_ictal"] = (pre_start_s, pre_end_s)
     else:
         warnings.warn(
-            f"[segmentor] pre_ictal inviavel: janela [{pre_start}, {pre_end}] "
-            f"fora dos limites [0, {n_samples}]"
+            f"[segmentor] pre_ictal inviavel: [{pre_start_s:.1f}, {pre_end_s:.1f}]"
         )
-        segments["pre_ictal"] = None
+        windows["pre_ictal"] = None
 
-    # ── pos_ictal ─────────────────────────────────────────────────────────────
-    # 90 s imediatamente posteriores ao fim do ictal: [ic_end, ic_end + 90s]
-    pos_start = ic_end
-    pos_end   = pos_start + win
+    # ── pos_ictal ────────────────────────────────────────────────────────────
+    pos_start_s = ic_end_s
+    pos_end_s   = ic_end_s + window_s
 
-    if pos_start >= 0 and pos_end <= n_samples:
-        segments["pos_ictal"] = raw_data[:, pos_start:pos_end].copy()
+    if pos_start_s >= 0 and pos_end_s <= total_s:
+        windows["pos_ictal"] = (pos_start_s, pos_end_s)
     else:
         warnings.warn(
-            f"[segmentor] pos_ictal inviavel: janela [{pos_start}, {pos_end}] "
-            f"fora dos limites [0, {n_samples}]"
+            f"[segmentor] pos_ictal inviavel: [{pos_start_s:.1f}, {pos_end_s:.1f}]"
         )
-        segments["pos_ictal"] = None
+        windows["pos_ictal"] = None
 
-    # ── normal ────────────────────────────────────────────────────────────────
-    # Segmento de 90 s em regiao livre de crises.
-    # Para cada crise, o intervalo de exclusao abrange [centro - 135s, centro + 135s]
-    # (ou seja, a uniao exata de pre_ictal, ictal e pos_ictal).
+    # ── normal ───────────────────────────────────────────────────────────────
     if all_sz_starts is None or all_sz_ends is None:
         all_sz_starts = [sz_start_rel_s]
         all_sz_ends   = [sz_end_rel_s]
@@ -116,52 +108,103 @@ def extract_segments(
         f_end   = min(total_s, c + 135.0)
         forbidden_zones.append((f_start, f_end))
 
-    # Unifica zonas de exclusao sobrepostas
+    # Unifica zonas sobrepostas
     forbidden_zones.sort(key=lambda x: x[0])
-    merged_zones = []
+    merged = []
     for z in forbidden_zones:
-        if not merged_zones:
-            merged_zones.append(list(z))
+        if not merged:
+            merged.append(list(z))
+        elif z[0] <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], z[1])
         else:
-            last = merged_zones[-1]
-            if z[0] <= last[1]:
-                last[1] = max(last[1], z[1])
-            else:
-                merged_zones.append(list(z))
+            merged.append(list(z))
 
     # Identifica intervalos livres com duracao >= window_s
     free_zones = []
-    current = 0.0
-    for z in merged_zones:
-        if z[0] - current >= window_s:
-            free_zones.append((current, z[0]))
-        current = max(current, z[1])
-    if total_s - current >= window_s:
-        free_zones.append((current, total_s))
+    cursor = 0.0
+    for z in merged:
+        if z[0] - cursor >= window_s:
+            free_zones.append((cursor, z[0]))
+        cursor = max(cursor, z[1])
+    if total_s - cursor >= window_s:
+        free_zones.append((cursor, total_s))
 
     if free_zones:
-        # Seed deterministico baseado no centro da crise para reprodutibilidade
         rng = random.Random(int(sz_center_s * 100))
-
-        # Seleciona uma zona livre ponderada pelo tamanho
         weights = [max(0.1, fz[1] - fz[0]) for fz in free_zones]
-        chosen_zone = rng.choices(free_zones, weights=weights, k=1)[0]
-
-        # Ponto de inicio aleatorio dentro da zona selecionada
-        max_start = chosen_zone[1] - window_s
-        norm_start_s = rng.uniform(chosen_zone[0], max_start)
-
-        norm_start = int(round(norm_start_s * fs))
-        norm_end   = norm_start + win
-
-        if norm_start >= 0 and norm_end <= n_samples:
-            segments["normal"] = raw_data[:, norm_start:norm_end].copy()
-        else:
-            segments["normal"] = None
+        chosen  = rng.choices(free_zones, weights=weights, k=1)[0]
+        max_start = chosen[1] - window_s
+        norm_start_s = rng.uniform(chosen[0], max_start)
+        windows["normal"] = (norm_start_s, norm_start_s + window_s)
     else:
-        warnings.warn(
-            f"[segmentor] normal inviavel: Nenhuma zona livre de {window_s}s encontrada."
-        )
-        segments["normal"] = None
+        warnings.warn("[segmentor] normal inviavel: nenhuma zona livre encontrada.")
+        windows["normal"] = None
+
+    return windows
+
+
+def extract_segments(
+    raw,
+    sz_start_rel_s: float,
+    sz_end_rel_s:   float,
+    all_sz_starts:  list = None,
+    all_sz_ends:    list = None,
+    window_s:       int  = WINDOW_S,
+    fs:             int  = FS,
+) -> dict:
+    """
+    Extrai 4 segmentos de `window_s` segundos usando leitura lazy do MNE Raw.
+
+    Apenas os samples de cada janela sao lidos do disco, sem carregar o
+    arquivo EDF completo em memoria.
+
+    Parameters
+    ----------
+    raw : mne.io.Raw
+        Objeto retornado por load_edf() com preload=False.
+    sz_start_rel_s : float
+        Inicio da crise em segundos relativos ao inicio do EDF.
+    sz_end_rel_s : float
+        Fim da crise em segundos relativos ao inicio do EDF.
+    all_sz_starts : list of float, optional
+        Inicios de todas as crises do arquivo EDF (para segmento normal).
+    all_sz_ends : list of float, optional
+        Fins de todas as crises do arquivo EDF.
+    window_s : int
+        Tamanho da janela em segundos (padrao: 90).
+    fs : int
+        Taxa de amostragem em Hz (padrao: 512).
+
+    Returns
+    -------
+    dict com chaves: 'pre_ictal', 'ictal', 'pos_ictal', 'normal'.
+    Cada valor e np.ndarray shape (n_channels, window_s*fs) ou None.
+    """
+    total_s  = float(raw.times[-1])
+    n_total  = raw.n_times
+    win      = int(round(window_s * fs))
+    segments = {}
+
+    windows = compute_windows(
+        sz_start_rel_s=sz_start_rel_s,
+        sz_end_rel_s=sz_end_rel_s,
+        total_s=total_s,
+        all_sz_starts=all_sz_starts,
+        all_sz_ends=all_sz_ends,
+        window_s=window_s,
+    )
+
+    for cls, interval in windows.items():
+        if interval is None:
+            segments[cls] = None
+            continue
+
+        start_s, end_s = interval
+        start_samp = max(0, int(round(start_s * fs)))
+        end_samp   = min(n_total, start_samp + win)
+
+        # Leitura lazy: so este trecho e lido do disco
+        data, _ = raw[:, start_samp:end_samp]
+        segments[cls] = data
 
     return segments

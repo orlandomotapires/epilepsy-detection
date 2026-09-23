@@ -55,22 +55,57 @@ def parse_seizure_list(txt_path: str) -> list:
     lines    = p.read_text(encoding="utf-8", errors="replace").splitlines()
     seizures = []
     current  = {}
+    
+    # Contexto global que se mantem entre crises (caso venham antes de "Seizure n")
+    ctx_edf = None
+    ctx_reg_start = None
+    ctx_reg_end = None
+    
+    current = None
 
     for raw_line in lines:
         line  = raw_line.strip()
         lower = line.lower()
+        if not lower: continue
 
-        if re.match(r"seizure\s+n\s*\d+", lower):
-            if current and "edf_file" in current:
+        if lower.startswith("file name:"):
+            ctx_edf = line.split(":", 1)[1].strip()
+            if current is not None:
+                current["edf_file"] = ctx_edf
+        
+        elif lower.startswith("registration start time:"):
+            ctx_reg_start = _hms_to_seconds(line.split(":", 1)[1])
+            if current is not None:
+                current["reg_start_s"] = ctx_reg_start
+                
+        elif lower.startswith("registration end time:"):
+            ctx_reg_end = _hms_to_seconds(line.split(":", 1)[1])
+            if current is not None:
+                current["reg_end_s"] = ctx_reg_end
+
+        elif re.match(r"seizure\s+n\s*\d+", lower):
+            if current is not None:
                 seizures.append(current)
             m       = re.search(r"(\d+)", line)
             current = {"seizure_n": int(m.group(1)) if m else len(seizures) + 1}
+            current = {
+                "seizure_n": int(m.group(1)) if m else len(seizures) + 1,
+            }
+            if ctx_edf:       current["edf_file"] = ctx_edf
+            if ctx_reg_start: current["reg_start_s"] = ctx_reg_start
+            if ctx_reg_end:   current["reg_end_s"] = ctx_reg_end
 
         elif lower.startswith("file name:"):
             current["edf_file"] = line.split(":", 1)[1].strip()
+        elif lower.startswith("seizure start time:") or lower.startswith("start time:"):
+            if current is not None:
+                current["sz_start_s"] = _hms_to_seconds(line.split(":", 1)[1])
 
         elif lower.startswith("registration start time:"):
             current["reg_start_s"] = _hms_to_seconds(line.split(":", 1)[1])
+        elif lower.startswith("seizure end time:") or lower.startswith("end time:"):
+            if current is not None:
+                current["sz_end_s"] = _hms_to_seconds(line.split(":", 1)[1])
 
         elif lower.startswith("registration end time:"):
             current["reg_end_s"] = _hms_to_seconds(line.split(":", 1)[1])
@@ -85,11 +120,24 @@ def parse_seizure_list(txt_path: str) -> list:
         seizures.append(current)
 
     # Calcula campos derivados
+    # Calcula campos derivados e lida com viradas de meia-noite
     for sz in seizures:
         rs = sz.get("reg_start_s", 0.0)
+        rs  = sz.get("reg_start_s", 0.0)
         re_ = sz.get("reg_end_s",   0.0)
         ss = sz.get("sz_start_s",  0.0)
         se = sz.get("sz_end_s",    0.0)
+        ss  = sz.get("sz_start_s",  0.0)
+        se  = sz.get("sz_end_s",    0.0)
+
+        # Se o termino e menor que o inicio, virou o dia (+24h)
+        if re_ < rs:
+            re_ += 86400.0
+        if ss < rs:
+            ss += 86400.0
+        if se < ss:
+            se += 86400.0
+
         sz["reg_duration_s"] = re_ - rs
         sz["sz_start_rel_s"] = ss - rs
         sz["sz_end_rel_s"]   = se - rs
