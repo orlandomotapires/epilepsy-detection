@@ -24,6 +24,24 @@ def _hms_to_seconds(hms: str) -> float:
     return float(int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2]))
 
 
+def _normalize_edf_name(name: str) -> str:
+    """
+    Corrige erros de digitacao nos nomes de EDF dos arquivos Seizures-list.
+
+    Exemplos:
+        'PNO6-1.edf' -> 'PN06-1.edf'   (letra O no lugar do zero)
+        'PN11-.edf'  -> 'PN11-1.edf'   (indice ausente)
+    """
+    name = name.strip()
+    m = re.match(r"^PN[O0]?(\d)(\d)?-([\w.]*)\.edf$", name, flags=re.IGNORECASE)
+    if not m:
+        return name
+    pid    = m.group(1) + (m.group(2) or "")
+    pid    = pid.zfill(2)
+    suffix = m.group(3) or "1"
+    return f"PN{pid}-{suffix}.edf"
+
+
 def parse_seizure_list(txt_path: str) -> list:
     """
     Le e parseia o arquivo Seizures-list-PNxx.txt.
@@ -69,7 +87,7 @@ def parse_seizure_list(txt_path: str) -> list:
         if not lower: continue
 
         if lower.startswith("file name:"):
-            ctx_edf = line.split(":", 1)[1].strip()
+            ctx_edf = _normalize_edf_name(line.split(":", 1)[1])
             if current is not None:
                 current["edf_file"] = ctx_edf
         

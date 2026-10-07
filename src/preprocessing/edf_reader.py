@@ -81,35 +81,29 @@ def load_edf(path: str, preload: bool = False) -> tuple:
     meta : dict
         fs, n_channels, duration_s, channel_names, missing_channels, path.
     """
-    raw = mne.io.read_raw_edf(str(path), preload=True, verbose=False)
-    raw.rename_channels({ch: ch.strip() for ch in raw.ch_names})
+    # Leitura lazy: apenas o header e lido; os dados ficam no disco.
     raw = mne.io.read_raw_edf(str(path), preload=preload, verbose=False)
 
-    eeg_present = [ch for ch in raw.ch_names if not _is_ekg(ch)]
-    available   = [ch for ch in STANDARD_CHANNELS if ch in eeg_present]
-    missing     = [ch for ch in STANDARD_CHANNELS if ch not in eeg_present]
     # Passo 1: Remove prefixo "EEG " / "EMG " / "EOG " dos nomes
-    # Normaliza nomes: remove prefixo "EEG " / "EMG " / "EOG "
     rename_map = {ch: _normalize_channel_name(ch) for ch in raw.ch_names}
     raw.rename_channels(rename_map)
 
     # Passo 2: Filtra canais nao-EEG (EKG, SPO2, HR, MK, etc.)
-    # Filtra canais nao-EEG (EKG, SPO2, HR, MK, etc.)
     eeg_present = [ch for ch in raw.ch_names if not _should_ignore(ch)]
 
     # Passo 3: Seleciona apenas canais do padrao de 29
-    # Seleciona apenas canais do padrao de 29
     available = [ch for ch in STANDARD_CHANNELS if ch in eeg_present]
     missing   = [ch for ch in STANDARD_CHANNELS if ch not in eeg_present]
 
     if not available:
-        raise ValueError(f"Nenhum canal EEG padrao encontrado em: {path}")
         raise ValueError(
             f"Nenhum canal EEG padrao encontrado em: {path}\n"
             f"Canais presentes apos normalizacao: {raw.ch_names}"
         )
 
-    raw.pick_channels(available)
+    # Ordem de STANDARD_CHANNELS e preservada (stft_converter depende dos indices)
+    raw.pick(available)
+    raw.reorder_channels(available)
 
     meta = {
         "fs":               int(raw.info["sfreq"]),
