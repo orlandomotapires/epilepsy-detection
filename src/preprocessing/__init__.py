@@ -8,12 +8,20 @@ Modulos:
     seizure_parser  : Leitura das anotacoes Seizures-list-PNxx.txt.
     segmentor       : Extracao de segmentos temporais.
     stft_converter  : Geracao de espectogramas STFT.
+    image_enhancer  : Tecnicas de melhoria visual de espectrogramas.
 """
 
 from .edf_reader import load_edf, STANDARD_CHANNELS
 from .seizure_parser import parse_seizure_list
 from .segmentor import extract_segments
 from .stft_converter import segment_to_spectrogram, save_spectrogram
+from .image_enhancer import (
+    apply_histogram_equalization,
+    apply_clahe,
+    apply_brightness,
+    apply_contrast,
+    enhance_spectrogram,
+)
 
 __all__ = [
     "load_edf",
@@ -22,4 +30,9 @@ __all__ = [
     "extract_segments",
     "segment_to_spectrogram",
     "save_spectrogram",
+    "apply_histogram_equalization",
+    "apply_clahe",
+    "apply_brightness",
+    "apply_contrast",
+    "enhance_spectrogram",
 ]
