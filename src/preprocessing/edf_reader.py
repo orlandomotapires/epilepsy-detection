@@ -1,23 +1,7 @@
-"""
-edf_reader.py
--------------
-Carrega e valida arquivos EDF da base Siena Scalp EEG.
+"""Carregamento de arquivos EDF da base Siena Scalp EEG."""
 
-Nota: Os canais no EDF da base Siena aparecem com prefixo "EEG "
-(ex: "EEG Fp1"). Este modulo normaliza os nomes removendo o prefixo
-antes de fazer o matching com STANDARD_CHANNELS.
-
-IMPORTANTE: load_edf usa preload=False para evitar carregar o arquivo
-inteiro em RAM. Use load_edf_window() para extrair janelas especificas
-diretamente do disco.
-"""
-
-import numpy as np
 import mne
-from pathlib import Path
 
-# 29 canais EEG padrao
-# 29 canais EEG padrao (sem prefixo)
 STANDARD_CHANNELS = [
     "Fp1", "F3",  "C3",  "P3",  "O1",  "F7",  "T3",  "T5",
     "Fc1", "Fc5", "Cp1", "Cp5", "F9",  "Fz",  "Cz",  "Pz",
@@ -25,29 +9,10 @@ STANDARD_CHANNELS = [
     "Fc2", "Fc6", "Cp2", "Cp6", "F10",
 ]
 
-EKG_PATTERNS = ["ekg", "ecg"]
-# Padroes de canais a ignorar (nao sao EEG cerebral)
-IGNORE_PATTERNS = ["ekg", "ecg", "spo2", "hr", "mk"]
-
-
-def _is_ekg(name: str) -> bool:
-    return any(p in name.lower() for p in EKG_PATTERNS)
-def _should_ignore(name: str) -> bool:
-    """Retorna True se o canal deve ser ignorado (EKG, SPO2, HR, etc.)."""
-    lower = name.lower().strip()
-    return any(p == lower or lower.startswith(p) for p in IGNORE_PATTERNS)
+IGNORE_PATTERNS = ("ekg", "ecg", "spo2", "hr", "mk")
 
 
 def _normalize_channel_name(name: str) -> str:
-    """
-    Normaliza o nome do canal removendo prefixos comuns.
-
-    Exemplos:
-        'EEG Fp1'  -> 'Fp1'
-        'EEG EKG'  -> 'EKG'
-        'EMG EMG1' -> 'EMG1'
-        'Fp1'      -> 'Fp1'   (sem alteracao)
-    """
     name = name.strip()
     for prefix in ("EEG ", "EMG ", "EOG "):
         if name.upper().startswith(prefix):
@@ -56,99 +21,26 @@ def _normalize_channel_name(name: str) -> str:
 
 
 def load_edf(path: str, preload: bool = False) -> tuple:
-    """
-    Carrega um arquivo EDF e seleciona os 29 canais EEG padrao.
-
-    Trata automaticamente o prefixo "EEG " nos nomes dos canais da base Siena.
-    Por padrao usa preload=False: o arquivo nao e lido inteiro para RAM.
-    Para extrair janelas especificas, use load_edf_window() ou
-    acesse raw[:, start:stop][0] apos chamar esta funcao.
-
-    Parameters
-    ----------
-    path : str
-        Caminho para o arquivo .edf.
-    preload : bool
-        Se True, carrega o arquivo inteiro em RAM (nao recomendado para
-        arquivos > 500 MB). Default: False.
-
-    Returns
-    -------
-    raw : mne.io.Raw
-        Objeto MNE com apenas os canais EEG disponiveis (EKG excluido).
-        Objeto MNE com os canais EEG renomeados (sem prefixo "EEG ").
-        Objeto MNE com os canais EEG padrao selecionados.
-    meta : dict
-        fs, n_channels, duration_s, channel_names, missing_channels, path.
-    """
-    # Leitura lazy: apenas o header e lido; os dados ficam no disco.
+    """Carrega um arquivo EDF e seleciona os canais EEG padrao disponiveis."""
     raw = mne.io.read_raw_edf(str(path), preload=preload, verbose=False)
+    raw.rename_channels({ch: _normalize_channel_name(ch) for ch in raw.ch_names})
 
-    # Passo 1: Remove prefixo "EEG " / "EMG " / "EOG " dos nomes
-    rename_map = {ch: _normalize_channel_name(ch) for ch in raw.ch_names}
-    raw.rename_channels(rename_map)
-
-    # Passo 2: Filtra canais nao-EEG (EKG, SPO2, HR, MK, etc.)
-    eeg_present = [ch for ch in raw.ch_names if not _should_ignore(ch)]
-
-    # Passo 3: Seleciona apenas canais do padrao de 29
+    eeg_present = [
+        ch for ch in raw.ch_names
+        if not ch.lower().strip().startswith(IGNORE_PATTERNS)
+    ]
     available = [ch for ch in STANDARD_CHANNELS if ch in eeg_present]
-    missing   = [ch for ch in STANDARD_CHANNELS if ch not in eeg_present]
-
     if not available:
-        raise ValueError(
-            f"Nenhum canal EEG padrao encontrado em: {path}\n"
-            f"Canais presentes apos normalizacao: {raw.ch_names}"
-        )
+        raise ValueError(f"Nenhum canal EEG padrao encontrado em: {path}")
 
-    # Ordem de STANDARD_CHANNELS e preservada (stft_converter depende dos indices)
     raw.pick(available)
     raw.reorder_channels(available)
 
     meta = {
-        "fs":               int(raw.info["sfreq"]),
-        "n_channels":       len(available),
-        "duration_s":       float(raw.times[-1]),
-        "channel_names":    available,
-        "missing_channels": missing,
-        "path":             str(path),
+        "fs": int(raw.info["sfreq"]),
+        "n_channels": len(available),
+        "duration_s": float(raw.times[-1]),
+        "channel_names": available,
+        "path": str(path),
     }
     return raw, meta
-
-
-def load_edf_window(
-    raw: "mne.io.Raw",
-    start_s: float,
-    end_s: float,
-    fs: int,
-) -> np.ndarray:
-    """
-    Extrai uma janela temporal do objeto Raw sem carregar o arquivo todo.
-
-    Usa leitura lazy do MNE: so os samples necessarios sao lidos do disco.
-
-    Parameters
-    ----------
-    raw : mne.io.Raw
-        Objeto retornado por load_edf() (preload=False).
-    start_s : float
-        Inicio da janela em segundos relativos ao inicio do EDF.
-    end_s : float
-        Fim da janela em segundos relativos ao inicio do EDF.
-    fs : int
-        Taxa de amostragem em Hz.
-
-    Returns
-    -------
-    np.ndarray
-        Shape (n_channels, n_samples) em float64.
-    """
-    n_total = raw.n_times
-    start_s = float(start_s)
-    end_s   = float(end_s)
-
-    start_samp = max(0, int(round(start_s * fs)))
-    end_samp   = min(n_total, int(round(end_s   * fs)))
-
-    data, _ = raw[:, start_samp:end_samp]
-    return data

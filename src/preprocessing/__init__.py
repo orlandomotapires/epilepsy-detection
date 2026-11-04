@@ -1,20 +1,20 @@
-"""
-src/preprocessing
------------------
-Modulos de pre-processamento para o projeto epilepsy-detection.
+"""Modulos de pre-processamento do projeto epilepsy-detection."""
 
-Modulos:
-    edf_reader      : Carregamento e validacao de arquivos EDF.
-    seizure_parser  : Leitura das anotacoes Seizures-list-PNxx.txt.
-    segmentor       : Extracao de segmentos temporais.
-    stft_converter  : Geracao de espectogramas STFT.
-    image_enhancer  : Tecnicas de melhoria visual de espectrogramas.
-"""
+try:
+    from .edf_reader import load_edf, STANDARD_CHANNELS
+except ModuleNotFoundError:
+    load_edf = None
+    STANDARD_CHANNELS = []
 
-from .edf_reader import load_edf, STANDARD_CHANNELS
 from .seizure_parser import parse_seizure_list
 from .segmentor import extract_segments
-from .stft_converter import segment_to_spectrogram, save_spectrogram
+
+try:
+    from .stft_converter import segment_to_spectrogram, save_spectrogram
+except ModuleNotFoundError:
+    segment_to_spectrogram = None
+    save_spectrogram = None
+
 from .image_enhancer import (
     apply_histogram_equalization,
     apply_clahe,
@@ -22,17 +22,12 @@ from .image_enhancer import (
     apply_contrast,
     enhance_spectrogram,
 )
-
-__all__ = [
-    "load_edf",
-    "STANDARD_CHANNELS",
-    "parse_seizure_list",
-    "extract_segments",
-    "segment_to_spectrogram",
-    "save_spectrogram",
-    "apply_histogram_equalization",
-    "apply_clahe",
-    "apply_brightness",
-    "apply_contrast",
-    "enhance_spectrogram",
-]
+from .conv_filters import (
+    KERNEL_SMOOTHING,
+    KERNEL_EDGE_DETECTION,
+    KERNEL_SOBEL,
+    convolve2d_manual,
+    apply_smoothing_filter,
+    apply_edge_detector_filter,
+    apply_sobel_filter,
+)
