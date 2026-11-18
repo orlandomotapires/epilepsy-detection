@@ -1,3 +1,4 @@
 *physionet.org*
 *.pyc*
-*IC EEG**.keras
+*IC EEG*
+*.keras
