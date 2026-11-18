@@ -16,3 +16,7 @@ pandas>=2.0           # manifesto annotations.csv
 
 # ── Ambiente de desenvolvimento ──────────────────────────────────────────────
 jupyterlab>=4.0
+
+tensorflow
+scikit-learn
+seaborn
