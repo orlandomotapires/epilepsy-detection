@@ -1,7 +1,8 @@
 # Data Card — Siena Scalp EEG Database
 
-**Versão:** 1.0
+**Versão:** 2.0
 **Criado em:** 2026-09-07
+**Atualizado em:** 2026-11-27 (v2: conjunto de imagens, divisão, limitações observadas nos modelos)
 **Projeto:** epilepsy-detection
 
 ---
@@ -75,7 +76,7 @@
 | Atributo                                            | Valor                      |
 | --------------------------------------------------- | -------------------------- |
 | **Nº de pacientes (original)**               | 14                         |
-| **Nº de pacientes utilizados neste projeto** | 13 (PN10 excluído)        |
+| **Nº de pacientes utilizados neste projeto** | 13 (PN10 excluído); 12 com imagens válidas (PN01 sem EDF utilizável) |
 | **Total de crises (dataset completo)**        | 47 crises                  |
 | **Tempo total de gravação**                 | ~128 horas                 |
 | **Formato dos arquivos**                      | EDF (European Data Format) |
@@ -139,10 +140,10 @@
 
 ## 7. Classes de Segmentação (definidas neste projeto)
 
-O dataset original não provê rótulos de segmentação temporal — as anotações são apenas os tempos de início e fim de cada crise. As **4 classes abaixo foram definidas para este projeto** com base nas anotações do `Seizures-list-PNxx.txt`:
-O dataset original não provê rótulos de segmentação temporal — as anotações contêm apenas os instantes de início (`sz_start`) e fim (`sz_end`) de cada crise. A partir do centro temporal da crise ($\text{sz\_center} = (\text{sz\_start} + \text{sz\_end}) / 2$), as **4 classes abaixo foram definidas para este projeto**:
+O dataset original não provê rótulos de segmentação temporal — as anotações (`Seizures-list-PNxx.txt`) contêm apenas os instantes de início (`sz_start`) e fim (`sz_end`) de cada crise. A partir do centro temporal da crise ($\text{sz\_center} = (\text{sz\_start} + \text{sz\_end}) / 2$), as **4 classes abaixo foram definidas para este projeto**:
 
 | Classe | Descrição | Janela Temporal |
+| --- | --- | --- |
 | `ictal` | Janela de 90 s **centralizada** no ponto médio da crise | $\text{sz\_center} - 45\text{ s}$ → $\text{sz\_center} + 45\text{ s}$ |
 | `pre_ictal` | Janela de 90 s imediatamente **anterior** ao início do ICTAL | $\text{ictal\_start} - 90\text{ s}$ → $\text{ictal\_start}$ |
 | `pos_ictal` | Janela de 90 s imediatamente **posterior** ao término do ICTAL | $\text{ictal\_end}$ → $\text{ictal\_end} + 90\text{ s}$ |
@@ -154,16 +155,57 @@ O dataset original não provê rótulos de segmentação temporal — as anotaç
 - Amostras por janela: **46.080** (90 s × 512 Hz)
 - Shape de cada segmento: `(29 canais, 46.080 amostras)`
 
+### 7.1 Conjunto de imagens (espectrogramas)
+
+Cada crise gera uma janela de cada classe, e cada janela vira uma imagem RGB. É este conjunto de imagens que os modelos usam.
+
+**Geração** (`src/preprocessing/stft_converter.py`, notebook `00`):
+
+| Etapa | Detalhe |
+| --- | --- |
+| STFT | `scipy.signal.spectrogram`, `nperseg=256`, `noverlap=128`, potência em dB ($10 \log_{10}$) |
+| Canais RGB | média dos espectrogramas de cada grupo de eletrodos: R = 9 frontais, G = 15 centrais, B = 5 parietais |
+| Normalização | min-max por canal, para 0–255 (`uint8`) |
+| Tamanho | 359 x 129 px: 359 quadros de tempo (90 s) x 129 faixas de frequência (0–256 Hz, 2 Hz cada) |
+| Orientação | 0 Hz na linha de cima da imagem, 256 Hz na de baixo |
+| Saída | `data/processed/spectrograms/PNxx/<edf>_seizureNN_<classe>.png` |
+
+**Realce** (`src/preprocessing/image_enhancer.py`, notebook `03`): CLAHE (`clip_limit=2.5`, grade 8x8) + ajuste de contraste (`alpha=1.35`, `gamma=0.85`) por canal. A intensidade média passa de ~1,6 para ~5,8 (de 255) e o contraste RMS sobe ~140%. Saída em `data/processed/mod_spectograms/`, com o registro de cada imagem em `data/annotations/modifications.csv`.
+
+**Entrada dos modelos:** imagem realçada, redimensionada para 224 x 224 e dividida por 255.
+
+**Quantidade:**
+
+| Item | Valor |
+| --- | --- |
+| Janelas anotadas (`annotations.csv`) | 148 |
+| Janelas válidas (`status = ok`) | **137** |
+| Descartadas | 8 de PN01 (`edf_missing`) e 3 da crise 3 de PN00 (`skipped_no_data`: sem 90 s de sinal) |
+| Por classe | `ICTAL` 34, `NORMAL` 35, `POS_ICTAL` 34, `PRE_ICTAL` 34 |
+| Pacientes com imagens válidas | 12 |
+
+**Divisão treino / validação / teste** (notebook `02`, `data/annotations/splits.csv`): cada paciente inteiro vai para um único conjunto (meta de 70/15/15% das imagens), para evitar vazamento entre conjuntos. Só o treino recebe oversampling, que repete 3 imagens de PN05 para fechar 25 por classe.
+
+| Conjunto | Pacientes | Imagens únicas | Imagens no `splits.csv` | Por classe |
+| --- | --- | --- | --- | --- |
+| Treino | PN00, PN03, PN05, PN06, PN07, PN11, PN12, PN14 | 97 | 100 | 25 |
+| Validação | PN09, PN16 | 20 | 20 | 5 |
+| Teste | PN13, PN17 | 20 | 20 | 5 |
+| **Total** | 12 | **137** | **140** | 35 |
+
 ---
 
 ## 8. Limitações Conhecidas
 
-- **Desequilíbrio de classes:** A classe `normal` tem potencial muito maior de amostras disponíveis do que as demais. Estratégias de balanceamento serão necessárias.
+- **Base pequena:** 137 imagens no total, 97 de treino. O teste tem 20 imagens de só 2 pacientes, então cada imagem vale 5 pontos percentuais de acurácia.
+- **Ruído da rede elétrica (50 Hz):** várias gravações têm uma linha horizontal forte em 50 Hz (e harmônico em 150 Hz). A intensidade depende do paciente (PN07 e PN03 muito altas; PN09, PN14 e PN17 quase nulas) e quase não muda entre classes. O Grad-CAM (notebook `07`) mostra que a FCNN e o Encoder-Decoder usam essa linha para decidir, o que é um atalho. Recomenda-se filtro notch ou cortar o espectrograma acima de ~45 Hz.
+- **Faixa de frequência larga:** o espectrograma vai até 256 Hz, mas a atividade do EEG de escalpo se concentra abaixo de ~40 Hz. A maior parte da imagem é escura (CLAHE não muda a fração de pixels não nulos).
+- **Balanceamento por construção:** cada crise gera uma janela de cada classe, então as classes ficam equilibradas. A classe `normal` teria muito mais janelas disponíveis, mas só uma por crise é usada.
 - **PN10 excluído:** O paciente PN10 possui apenas 20 canais EEG (vs. 29 dos demais) e foi excluído para manter uniformidade do input.
 - **Datas anonimizadas:** Todas as datas nos arquivos `.edf` foram de-identificadas. As marcações de tempo são relativas, não absolutas.
 - **Tipo dominante de crise:** A grande maioria dos pacientes apresenta `IAS` de origem temporal. O dataset não representa uniformemente todos os tipos de epilepsia — resultados podem não generalizar para outros tipos.
 - **Amostras por paciente variáveis:** PN07 e PN11 têm apenas 1 crise cada, enquanto PN06 e PN00 têm 5. Há desequilíbrio também entre pacientes.
-- **Segmentos parcialmente inviáveis:** Alguns segmentos `pre_ictal` ou `pos_ictal` podem não ter 90 s disponíveis (gravação muito próxima da crise). Nesses casos, o segmento será marcado como `skipped` no `annotations.csv`.
+- **Segmentos parcialmente inviáveis:** Alguns segmentos `pre_ictal` ou `pos_ictal` podem não ter 90 s disponíveis (gravação muito próxima da crise). Nesses casos, o segmento é marcado como `skipped_no_data` no `annotations.csv` (aconteceu na crise 3 de PN00).
 - **Uso clínico proibido:** Este dataset é destinado a fins de pesquisa. O modelo resultante **não deve ser utilizado como ferramenta diagnóstica principal**.
 
 ---

@@ -1,106 +1,138 @@
-# eplepsy-detection
+# epilepsy-detection
 
-A ideia do projeto é utilizar dados de EEG (electro-encefalograma) de pacientes com epilepsia para conseguir classificar em qual fase do ciclo epiléptico aquele comportamento do sinal se encontra. Essa classificação será feita por meio do uso de visão computacional onde um modelo será treinado utilizando sinais de EEG convertidos para imagem utilizando STFT (Short-Time-Fourier-Transform).
+Classificação da fase do ciclo epiléptico a partir de espectrogramas de EEG, com redes neurais convolucionais.
 
-A entrada do modelo serão os espectogramas das séries de EEG e a saída esperada é a classificação do modelo em **quatro classes**:
+## Objetivo
+
+O projeto investiga se uma rede convolucional consegue dizer em que fase do ciclo epiléptico está uma janela de 90 s de EEG de escalpo. O sinal de cada janela é convertido em imagem por STFT (*Short-Time Fourier Transform*) e a rede classifica a imagem em **quatro classes**:
 
 | Classe | Descrição |
 |---|---|
-| `pre_ictal` | Janela de 90 s imediatamente **antes** do início da crise |
-| `ictal` | Janela de 90 s **durante** a crise epiléptica |
-| `pos_ictal` | Janela de 90 s imediatamente **após** o fim da crise |
-| `normal` | Janela de 90 s de atividade cerebral basal, distante de qualquer crise |
+| `PRE_ICTAL` | Janela de 90 s imediatamente **antes** da crise |
+| `ICTAL` | Janela de 90 s **durante** a crise (centrada no meio dela) |
+| `POS_ICTAL` | Janela de 90 s imediatamente **depois** da crise |
+| `NORMAL` | Janela de 90 s de atividade basal, longe de qualquer crise |
 
-A unidade de análise será o pixel, tendo em vista que estamos tratando com visão computacional. O público interessado e uso pretendido é situado nos seguintes grupos: profissionais da área da saúde, pesquisadores, empresas que têm o objetivo de desenvolver tecnologias embarcadas para realizar essas detecções e também os pacientes com crises epilépticas.
+A métrica mais importante é a capacidade de reconhecer a fase `ICTAL` e separá-la das demais.
 
-O modelo deve ser avaliado utilizando métricas de sucesso como a capacidade de discernir entre as quatro fases do ciclo epiléptico, sendo a principal métrica a capacidade do modelo de identificar corretamente a fase `ictal` (durante a crise) e distingui-la das demais fases.
+**Uso pretendido:** apoio à triagem para profissionais de saúde, pesquisadores e empresas que desenvolvem detecção embarcada. O modelo **não é ferramenta de diagnóstico**; a decisão fica com o profissional de saúde. Aquisição de dados e prescrição de medicamentos estão fora do escopo.
 
-É importante citar que apesar de o modelo ser capaz de discernir com precisão considerável entre os casos de epilepsia, a última palavra fica encubida do profissional de sáude responsável e o modelo deve ser utilizado apenas para fins de triagem e aceleração do processo. O modelo não deve ser utilizado como principal fonte de diagnóstico e sim como um auxílio.
+## Base de dados
 
-Alguns pontos estão fora do escopo do projeto em questão, sendo eles: obtenção do dados e realizar diagnósticos para prescrição de medicamentos.
+[Siena Scalp EEG Database](https://physionet.org/content/siena-scalp-eeg/1.0.0/) (PhysioNet, v1.0.0): EEG de 14 pacientes adultos, 512 Hz, sistema 10-20. Detalhes no [Data Card](docs/data_card.md).
 
-### Estrutura de Diretórios
+| Item | Valor |
+|---|---|
+| Pacientes usados | 12 (PN10 excluído por ter 20 canais; PN01 sem EDF utilizável) |
+| Imagens válidas | **137** espectrogramas RGB de 359 x 129 px (tempo x frequência) |
+| Imagens por classe | 34–35 (`ICTAL` 34, `NORMAL` 35, `POS_ICTAL` 34, `PRE_ICTAL` 34) |
+| Canais RGB | média dos espectrogramas dos eletrodos frontais (R), centrais (G) e parietais (B) |
+| Pré-processamento | CLAHE + ajuste de contraste, redimensionamento para 224 x 224 e normalização em [0, 1] |
 
-**data**
-Responsável por armazenar todas as fontes de dados utilizadas neste projeto.
+**Divisão treino / validação / teste**, por paciente (nenhum paciente aparece em dois conjuntos):
 
-**notebooks**
-O espaço de trabalho para a exploração inicial de dados, desenvolvimento e análise do modelo.
+| Conjunto | Pacientes | Imagens únicas | Imagens usadas | Por classe |
+|---|---|---|---|---|
+| Treino | PN00, PN03, PN05, PN06, PN07, PN11, PN12, PN14 | 97 | 100 (oversampling de 3) | 25 |
+| Validação | PN09, PN16 | 20 | 20 | 5 |
+| Teste | PN13, PN17 | 20 | 20 | 5 |
 
-**src**
-A pasta principal para o código-fonte.
+A divisão está em [data/annotations/splits.csv](data/annotations/splits.csv).
 
-**models**
-Uma pasta dedicada para salvar modelos de aprendizado de máquina treinados e pesos após cada execução bem-sucedida de treinamento.
+## Modelo
 
-**docs**
-O centro de documentação.
+A CNN tem três blocos convolucionais e uma cabeça densa:
 
-| **Etapa e Entregável**        | **Marco do Projeto** |
-| ------------------------------------ | -------------------------- |
-| README inicial e plano de trabalho   | Projeto definido           |
-| Script de download e Data Card v1    | Dados adquiridos           |
-| Relatório exploratório             | Base compreendida          |
-| annotations.csv e guia de anotação | Rótulos auditados         |
-| split_manifest.csv e testes          | Conjuntos protegidos       |
-| Pipeline e comparações visuais     | Entrada padronizada        |
-| Baseline e política de augmentation | Referência criada         |
-| Visualizações e model.summary()    | Modelo projetado           |
-| experiments.csv e melhor checkpoint  | Modelo treinado            |
-| Relatório de avaliação            | Desempenho explicado       |
-| Threshold, incerteza e Grad-CAM      | Saída interpretável      |
-| Projeto final e apresentação       | Projeto concluído         |
+| Camada | Saída | Parâmetros |
+|---|---|---|
+| Input | 224 x 224 x 3 | 0 |
+| Conv2D 32 (3x3, ReLU) + MaxPooling 2x2 | 112 x 112 x 32 | 896 |
+| Conv2D 64 (3x3, ReLU) + MaxPooling 2x2 | 56 x 56 x 64 | 18.496 |
+| Conv2D 128 (3x3, ReLU) — `conv2d_2` + MaxPooling 2x2 | 28 x 28 x 128 | 73.856 |
+| Flatten | 100.352 | 0 |
+| Dense 128 (ReLU) + Dropout 0,5 | 128 | 12.845.184 |
+| Dense 4 (Softmax) | 4 | 516 |
+| **Total** | | **12.938.948** |
 
-**Metodologia**
+**Parâmetros de treinamento**
 
-Os dados foram obtidos da base Siena Scalp EEG disponível em [physionet.org/content/siena-scalp-eeg/1.0.0](https://physionet.org/content/siena-scalp-eeg/1.0.0/) e salvos no repositório local. A base contém **13 pacientes utilizados neste projeto** (PN00, PN01, PN03, PN05, PN06, PN07, PN09, PN11, PN12, PN13, PN14, PN16, PN17). O paciente PN10 foi **excluído** por possuir apenas 20 canais EEG, enquanto o padrão dos demais é 29 canais.
+| Parâmetro | Valor |
+|---|---|
+| Otimizador | Adam (taxa de aprendizado padrão, 0,001) |
+| Função de perda | `sparse_categorical_crossentropy` |
+| Épocas | 30 |
+| Batch size | 32 (padrão do Keras) |
+| Seed | 0 (`tf.keras.utils.set_random_seed`) |
+| Augmentation | nenhum |
 
-Cada paciente possui a gravação de uma ou mais ocorrências de epilepsia. Todas as ocorrências estão registradas em um arquivo chamado `Seizures-list-PNxx.txt`. Esse arquivo segue o seguinte formato:
+Para comparação, foram treinados mais dois modelos com o **mesmo extrator convolucional** e os mesmos parâmetros de treino:
+
+- **FCNN** (110.276 parâmetros): troca `Flatten` + `Dense` por convoluções 1x1 e `GlobalAveragePooling2D`.
+- **Encoder-Decoder** (337.828 parâmetros): acrescenta três `Conv2DTranspose` depois do extrator e usa a cabeça da FCNN.
+
+## Resultados
+
+Conjunto de teste (20 imagens, 5 por classe). Precisão, recall e F1 são a média macro das 4 classes. O acaso fica em 0,25.
+
+| Modelo | Accuracy | Precision | Recall | F1-Score |
+|---|---|---|---|---|
+| CNN | 0,15 | 0,10 | 0,15 | 0,12 |
+| **FCNN** | **0,40** | **0,53** | **0,40** | **0,38** |
+| Encoder-Decoder | 0,25 | 0,06 | 0,25 | 0,10 |
+
+- **CNN:** overfitting. Chega a 97% de acurácia no treino e fica em 40% na validação e 15% no teste. Com 12,9 milhões de parâmetros e 100 imagens, a rede decora o treino.
+- **FCNN:** o melhor modelo, mas ainda fraco. Na classe `ICTAL` tem precisão 1,00 e recall 0,20 (acerta 1 de 5 crises e não dá falso alarme).
+- **Encoder-Decoder:** prevê `NORMAL` para todas as imagens.
+
+**Interpretabilidade (Grad-CAM, camada `conv2d_2`).** A CNN olha para as baixas frequências (0–10 Hz) e para rajadas curtas de banda larga, sem um padrão consistente por classe. A FCNN e o Encoder-Decoder dão muito peso à linha de **50 Hz**, que é ruído da rede elétrica e varia por paciente, não por fase da crise. A análise completa está em [notebooks/07_gradcam.ipynb](notebooks/07_gradcam.ipynb) e as figuras em [docs/gradcam_figures/](docs/gradcam_figures/).
+
+**Próximos passos:** filtrar 50 Hz e harmônicos (ou limitar o espectrograma a ~45 Hz), aumentar os dados e usar validação *leave-one-patient-out*.
+
+## Estrutura do projeto
 
 ```
-PNxx
-
-Data Sampling Rate: 512 Hz
-
-Channels in EDF files:
-Channel 1: Fp1 ... Channel 29: F10
-Channel 33: EKG 1 / Channel 34: EKG 2
-
-Seizure n N
-File name: PNxx-Y.edf
-Registration start time: HH.MM.SS
-Registration end time:   HH.MM.SS
-Seizure start time:      HH.MM.SS
-Seizure end time:        HH.MM.SS
+epilepsy-detection/
+├── data/
+│   ├── annotations/        # annotations.csv (janelas e status), splits.csv (divisão), modifications.csv (realce)
+│   └── processed/
+│       ├── spectrograms/       # espectrogramas STFT gerados a partir do EDF
+│       └── mod_spectograms/    # espectrogramas com CLAHE + contraste (entrada dos modelos)
+├── docs/
+│   ├── data_card.md        # descrição da base e do conjunto de imagens
+│   ├── eda_report.md       # relatório da análise exploratória
+│   ├── eda_figures/        # figuras da análise exploratória
+│   └── gradcam_figures/    # galerias e mapas médios do Grad-CAM
+├── models/                 # modelos treinados (.keras, fora do git)
+├── notebooks/
+│   ├── 00_data_conversion.ipynb                 # EDF → janelas de 90 s → espectrogramas
+│   ├── 01_exploratory_analysis.ipynb            # análise exploratória
+│   ├── 02_split_balance.ipynb                   # divisão por paciente e oversampling
+│   ├── 03_image_enhancement.ipynb               # CLAHE + contraste
+│   ├── 04_convolutional_filters.ipynb           # filtros convolucionais 3x3 aplicados à mão
+│   ├── 05_cnn_classification.ipynb              # treino da CNN
+│   ├── 05_fcnn_classification.ipynb             # treino da FCNN
+│   ├── 05_encoder_decoder_classification.ipynb  # treino do Encoder-Decoder
+│   ├── 06_metrics.ipynb                         # avaliação no teste
+│   └── 07_gradcam.ipynb                         # Grad-CAM e interpretação
+├── src/preprocessing/      # leitura de EDF, segmentação, STFT, realce e filtros
+├── physionet.org/          # dados brutos baixados (fora do git)
+└── requirements.txt
 ```
 
-**Canais EEG utilizados (29 canais padrão):**
+## Como reproduzir
 
-| Ch | Nome | Ch | Nome | Ch | Nome |
-|---|---|---|---|---|---|
-| 1 | Fp1 | 11 | Cp1 | 21 | O2  |
-| 2 | F3  | 12 | Cp5 | 22 | F8  |
-| 3 | C3  | 13 | F9  | 23 | T4  |
-| 4 | P3  | 14 | Fz  | 24 | T6  |
-| 5 | O1  | 15 | Cz  | 25 | Fc2 |
-| 6 | F7  | 16 | Pz  | 26 | Fc6 |
-| 7 | T3  | 17 | Fp2 | 27 | Cp2 |
-| 8 | T5  | 18 | F4  | 28 | Cp6 |
-| 9 | Fc1 | 19 | C4  | 29 | F10 |
-| 10 | Fc5 | 20 | P4 | — | —  |
+1. Crie o ambiente (Python 3.11) e instale as dependências:
+   ```bash
+   pip install -r requirements.txt
+   ```
+2. Baixe a base para a raiz do projeto (~13 GB):
+   ```bash
+   wget -r -N -c -np https://physionet.org/files/siena-scalp-eeg/1.0.0/
+   ```
+3. Rode os notebooks na ordem numérica, de `00` a `07`. Os notebooks `05` salvam os modelos em `models/`, que os notebooks `06` e `07` carregam.
 
-> **Nota:** Os canais EKG (33 e 34) são ignorados no pré-processamento.
+Os espectrogramas e o `splits.csv` já estão versionados, então para treinar e avaliar basta começar no `05`.
 
-**Segmentação temporal (janela fixa de 90 s = 46.080 amostras a 512 Hz):**
+## Licença
 
-Para cada crise anotada (com início `sz_start` e fim `sz_end`), define-se o ponto central da crise: $\text{sz\_center} = (\text{sz\_start} + \text{sz\_end}) / 2$. A partir dele, os 4 segmentos de 90 segundos são extraídos:
-
-| Classe | Início | Fim | Descrição |
-|---|---|---|---|
-| `ictal`      | $\text{sz\_center} - 45\text{ s}$ | $\text{sz\_center} + 45\text{ s}$ | Janela de 90 s centralizada no ponto médio da crise |
-| `pre_ictal`  | $\text{ictal\_start} - 90\text{ s}$ | $\text{ictal\_start}$ | Janela de 90 s imediatamente anterior ao início do ICTAL |
-| `pos_ictal`  | $\text{ictal\_end}$ | $\text{ictal\_end} + 90\text{ s}$ | Janela de 90 s imediatamente posterior ao término do ICTAL |
-| `normal`     | Início livre fora de crises | mesmo $+ 90\text{ s}$ | Janela de 90 s em região basal que não colida com a zona $[\text{sz\_center} - 135\text{ s}, \text{sz\_center} + 135\text{ s}]$ de nenhuma crise do EDF |
-
-O pré-processamento é realizado no notebook `notebooks/00_data_conversion.ipynb`, que recebe como entrada a pasta `physionet.org/files` e gera os espectogramas STFT em `data/processed/spectrograms/`, organizados por paciente e nomeados conforme o arquivo EDF e crise de origem (ex: `PN00-1_seizure01_ictal.png`).
-
+Código sob licença MIT ([LICENSE](LICENSE)). A base Siena Scalp EEG é distribuída sob CC BY 4.0; cite Detti (2020) e o PhysioNet ao usar os dados (veja o [Data Card](docs/data_card.md#12-citações)).
